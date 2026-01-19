@@ -175,7 +175,7 @@ static int drm_init_display(struct drmdisplay  *native)
 {
 	char *card_name = "msm_drm";
 	int card_fd = -1;
-	int ret;
+	int ret = 0;
 
 	drmModeRes *resources;
 	drmModeConnector *connector = NULL;
@@ -202,7 +202,7 @@ static int drm_init_display(struct drmdisplay  *native)
 	/* find a connected connector: */
 	for (i = 0; i < resources->count_connectors; i++) {
 		connector = drmModeGetConnector(native->card_fd, resources->connectors[i]);
-		if (connector->connection == DRM_MODE_CONNECTED) {
+		if ((connector != NULL) && (connector->connection == DRM_MODE_CONNECTED)) {
 			/* it's connected, let's use this! */
 			break;
 		}
@@ -241,7 +241,7 @@ static int drm_init_display(struct drmdisplay  *native)
 	/* find encoder: */
 	for (i = 0; i < resources->count_encoders; i++) {
 		encoder = drmModeGetEncoder(native->card_fd, resources->encoders[i]);
-		if (encoder->encoder_id == connector->encoder_id)
+		if ((encoder != NULL) && (encoder->encoder_id == connector->encoder_id))
 			break;
 		drmModeFreeEncoder(encoder);
 		encoder = NULL;
@@ -292,16 +292,20 @@ static int drm_init_display(struct drmdisplay  *native)
 			drmModeObjectPropertiesPtr props = drmModeObjectGetProperties(native->card_fd, id, DRM_MODE_OBJECT_PLANE);
 			primary_id = id;
 
-			for (j = 0; j < props->count_props; j++) {
-				drmModePropertyPtr prop = drmModeGetProperty(native->card_fd, props->props[j]);
-				if ((strcmp(prop->name, "type") == 0) && (props->prop_values[j] == DRM_PLANE_TYPE_PRIMARY)) {
-					found_primary = 1;
+			if (props != NULL) {
+				for (j = 0; j < props->count_props; j++) {
+					drmModePropertyPtr prop = drmModeGetProperty(native->card_fd, props->props[j]);
+					if ((prop != NULL) &&
+							(strcmp(prop->name, "type") == 0) &&
+							(props->prop_values[j] == DRM_PLANE_TYPE_PRIMARY)) {
+						found_primary = 1;
+					}
+
+					drmModeFreeProperty(prop);
 				}
 
-				drmModeFreeProperty(prop);
+				drmModeFreeObjectProperties(props);
 			}
-
-			drmModeFreeObjectProperties(props);
 		}
 
 		drmModeFreePlane(plane);
@@ -316,13 +320,18 @@ static int drm_init_display(struct drmdisplay  *native)
 	native->plane = calloc(1, sizeof(*native->plane));
 	native->crtc = calloc(1, sizeof(*native->crtc));
 	native->conn = calloc(1, sizeof(*native->conn));
+	if ((native->plane == NULL) || ( native->crtc == NULL) || (native->conn == NULL)) {
+		ret = -ENOMEM;
+		goto error;
+	}
 
 #define get_resource(NODE, NODETYPE, id) do {		\
 		native->NODE->hdl = drmModeGet##NODETYPE(native->card_fd, id);		\
 		if (!native->NODE->hdl) {		\
 			printf("could not get %s %i: %s\n",		\
 						#NODE, id, strerror(errno));		\
-			return ret;			\
+			ret = -errno;			\
+			goto error;			\
 		}		\
 	} while (0)
 
@@ -336,10 +345,15 @@ static int drm_init_display(struct drmdisplay  *native)
 				id, DRM_MODE_OBJECT_##NODETYPE);			\
 		if (!native->NODE->props) {						\
 			printf("could not get %s %u properties: %s\n", #NODE, id, strerror(errno));		\
-			return ret;						\
+			ret = -errno;						\
+			goto error;						\
 		}								\
 		native->NODE->prop_res = calloc(native->NODE->props->count_props,	\
 				sizeof(*native->NODE->prop_res));			\
+		if (!native->NODE->prop_res) {					\
+			ret = -ENOMEM;					\
+			goto error;					\
+		}								\
 		for (i = 0; i < native->NODE->props->count_props; i++) {		\
 			native->NODE->prop_res[i] = drmModeGetProperty(native->card_fd,	\
 					native->NODE->props->props[i]);		\
@@ -351,6 +365,16 @@ static int drm_init_display(struct drmdisplay  *native)
 	get_properties(crtc, CRTC, native->crtc_id);
 
 	native->flags = DRM_MODE_ATOMIC_NONBLOCK | DRM_MODE_ATOMIC_ALLOW_MODESET;
+	return ret;
+
+error:
+	if (native->plane)
+		free(native->plane);
+	if (native->crtc)
+		free(native->crtc);
+	if (native->conn)
+		free(native->conn);
+	return ret;
 }
 
 /* Buffer switch */
@@ -527,6 +551,10 @@ struct drm_fb * drm_fb_get_from_bo(struct drmdisplay *native, struct gbm_bo *bo)
 		return fb;
 
 	fb = calloc(1, sizeof *fb);
+	if (!fb) {
+		return NULL;
+	}
+
 	fb->bo = bo;
 
 	width = gbm_bo_get_width(bo);
