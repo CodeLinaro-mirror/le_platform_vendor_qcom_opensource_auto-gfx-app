@@ -51,7 +51,7 @@
 #define BOOTKPI_INIT bootkpi_log_init
 #define BOOTKPI_LOG bootkpi_log_line
 #else
-#define BOOTKPI_INIT
+#define BOOTKPI_INIT() ((void)0)
 #define BOOTKPI_LOG printf
 #endif
 
@@ -259,7 +259,7 @@ void create_surface(struct window *window, struct egl *egl, int secure)
 {
 	int i = 0;
 	EGLBoolean ret;
-	struct display *display = window->display;
+	struct display *display = NULL;
 	EGLAttrib attribs[12];
 
 	if (secure) {
@@ -275,6 +275,7 @@ void create_surface(struct window *window, struct egl *egl, int secure)
 	if (yxw_init_window(window))
 		return;
 
+	display = window->display;
 	egl->egl_surface = eglCreatePlatformWindowSurface(egl->dpy,
 										egl->conf, window->hdl,
 										attribs);
@@ -294,7 +295,7 @@ void create_surface(struct window *window, struct egl *egl, int secure)
 void create_psurface(struct window *window, struct egl *egl, int w, int h)
 {
 	EGLBoolean ret;
-	struct display *display = window->display;
+	struct display *display = NULL;
 
     EGLint surfaceAttrib[] =
     {
@@ -305,6 +306,8 @@ void create_psurface(struct window *window, struct egl *egl, int w, int h)
 
 	if ((window == NULL) || (egl == NULL))
 		return;
+
+	display = window->display;
 
 	if (yxw_init_window(window))
 		return;
@@ -375,7 +378,7 @@ static void redraw(struct window *window, struct gl *gl, uint32_t time)
 	mvp[0][0] =  cos(angle);
 	mvp[2][0] =  sin(angle);
 	mvp[0][2] = -sin(angle);
-	mvp[2][2] =  sin(angle);
+	mvp[2][2] =  cos(angle);
 
 	glViewport(0, 0, window->rect.width, window->rect.height);
 
@@ -421,7 +424,7 @@ int main(int argc, char **argv)
 	int delay = 0;
 	int is_secure = 0;
 	uint32_t time, initial_frame_time = 0, benchmark_time = 0;
-	uint32_t frames = 0, total_frames = 0, max_frames;
+	uint32_t frames = 0, total_frames = 0, max_frames = 0;
 	struct timeval tv;
 
 	window.rect.width  = 1920;
@@ -476,7 +479,7 @@ int main(int argc, char **argv)
 
 		if (one_frame_done == 0) {
 			one_frame_done = 1;
-			BOOTKPI_LOG("qcom-bootkpi:GFX:%s, First frame rendere done.\n", argv[0]);
+			BOOTKPI_LOG("qcom-bootkpi:GFX:%s, First frame render done.\n", argv[0]);
 		}
 
 		if (time - benchmark_time > (benchmark_interval * 1000)) {
